@@ -17,12 +17,22 @@ extern char end[]; // first address after kernel.
 struct run {
   struct run *next;
 };
-
 struct {
   struct spinlock lock;
   struct run *freelist;
 } kmem;
 
+uint64 
+freemem(){
+  struct run *r = kmem.freelist;
+  uint64 cnt = 0;
+  while(r){
+    cnt++;
+    r = r->next;
+  }
+  uint64 size  = cnt * PGSIZE;
+  return size;
+}
 void
 kinit()
 {

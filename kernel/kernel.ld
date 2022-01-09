@@ -25,7 +25,6 @@ SECTIONS
     . = ALIGN(16);
     *(.rodata .rodata.*)
   }
-
   .data : {
     . = ALIGN(16);
     *(.sdata .sdata.*) /* do not need to distinguish this from .data */

@@ -76,15 +76,22 @@ walk(pagetable_t pagetable, uint64 va, int alloc)
 
   for(int level = 2; level > 0; level--) {
     pte_t *pte = &pagetable[PX(level, va)];
+    // V标志位为1，则该PTE已经映射到了下一级页表的物理地址
     if(*pte & PTE_V) {
       pagetable = (pagetable_t)PTE2PA(*pte);
+    // 如果V为0，则需要判断是否给该PTE分配下一级页表
     } else {
+      // 如果alloc为0，就表示不分配下一级页表，直接返回0
+      // 如果alloc为1，且物理内存中有空间可以分配，则给PTE分配下一级页表
       if(!alloc || (pagetable = (pde_t*)kalloc()) == 0)
         return 0;
+      // 将下一级页表置为0
       memset(pagetable, 0, PGSIZE);
+      // 将PTE映射到刚才分配的物理页，也就是下一级页表
       *pte = PA2PTE(pagetable) | PTE_V;
     }
   }
+  // 此时的pagetable是最后一级页表的物理地址，取出va对应的PTE返回
   return &pagetable[PX(0, va)];
 }
 
@@ -154,10 +161,13 @@ mappages(pagetable_t pagetable, uint64 va, uint64 size, uint64 pa, int perm)
   a = PGROUNDDOWN(va);
   last = PGROUNDDOWN(va + size - 1);
   for(;;){
+    // walk函数找到va对应的PTE
     if((pte = walk(pagetable, a, 1)) == 0)
       return -1;
+    // 判断PTE的Valid标志位，如果为1，则说明这个虚拟地址已经映射到了某一个物理地址
     if(*pte & PTE_V)
       panic("remap");
+    // 将PTE映射到指定的物理页号
     *pte = PA2PTE(pa) | perm | PTE_V;
     if(a == last)
       break;

@@ -21,6 +21,18 @@ static void freeproc(struct proc *p);
 
 extern char trampoline[]; // trampoline.S
 
+// 获取进程表中状态不为unused的proc
+uint64
+not_unused_proc(){
+  struct proc *p;
+  uint64 cnt = 0;
+  for(p = proc;p < &proc[NPROC];p++){
+    if(p->state != UNUSED){
+      cnt++;
+    } 
+  } 
+  return cnt;
+}
 // initialize the proc table at boot time.
 void
 procinit(void)
@@ -28,6 +40,7 @@ procinit(void)
   struct proc *p;
   
   initlock(&pid_lock, "nextpid");
+  // 给所有的用户进程分配内核栈，映射到内核地址空间的顶部，在trampoline下面
   for(p = proc; p < &proc[NPROC]; p++) {
       initlock(&p->lock, "proc");
 
@@ -94,6 +107,7 @@ allocproc(void)
 {
   struct proc *p;
 
+  // 在进程表中找到UNUSED 的进程
   for(p = proc; p < &proc[NPROC]; p++) {
     acquire(&p->lock);
     if(p->state == UNUSED) {
@@ -107,13 +121,13 @@ allocproc(void)
 found:
   p->pid = allocpid();
 
-  // Allocate a trapframe page.
+  // 分配trapframe
   if((p->trapframe = (struct trapframe *)kalloc()) == 0){
     release(&p->lock);
     return 0;
   }
 
-  // An empty user page table.
+  // 创建页表，只映射了trampoline page和trapframe page
   p->pagetable = proc_pagetable(p);
   if(p->pagetable == 0){
     freeproc(p);
@@ -160,6 +174,7 @@ proc_pagetable(struct proc *p)
   pagetable_t pagetable;
 
   // An empty page table.
+  // 为根页表分配物理页
   pagetable = uvmcreate();
   if(pagetable == 0)
     return 0;
@@ -277,6 +292,9 @@ fork(void)
 
   np->parent = p;
 
+  // for lab2 system call tracsing
+  // 复制父进程要跟踪的系统调用掩码，以便继续跟踪
+  np->traced_syscall_mask = p->traced_syscall_mask;
   // copy saved user registers.
   *(np->trapframe) = *(p->trapframe);
 

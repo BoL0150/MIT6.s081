@@ -6,7 +6,9 @@
 #include "memlayout.h"
 #include "spinlock.h"
 #include "proc.h"
-
+#include "sysinfo.h"
+// #include "kalloc.c"
+// #include "proc.c"
 uint64
 sys_exit(void)
 {
@@ -94,4 +96,27 @@ sys_uptime(void)
   xticks = ticks;
   release(&tickslock);
   return xticks;
+}
+
+uint64 
+sys_trace(void){
+  int traced_syscall_mask = 0;
+  // 获取a0寄存器的值，也就是系统调用的第一个参数，也就是要求trace追踪的系统调用号的掩码
+  if(argint(0,&traced_syscall_mask) < 0)
+    return -1;
+  myproc()->traced_syscall_mask = traced_syscall_mask;
+  return 0;
+}
+
+uint64 
+sys_sysinfo(void){
+  struct sysinfo sysinfo;
+  sysinfo.freemem = freemem();
+  sysinfo.nproc = not_unused_proc();
+  struct proc *p = myproc();
+  uint64 arg = p->trapframe->a0;
+  // 将内核中的sysinfo地址中的值复制到用户空间中的arg地址
+  if(copyout(p->pagetable, arg, (char *)&sysinfo, sizeof(sysinfo)) < 0)
+    return -1;
+  return 0;
 }
