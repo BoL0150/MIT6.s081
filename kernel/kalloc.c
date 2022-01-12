@@ -71,7 +71,9 @@ kalloc(void)
   struct run *r;
 
   acquire(&kmem.lock);
+  // 获取freelist中的第一个page
   r = kmem.freelist;
+  // 如果不为空，则将第一个page从freelist中移除
   if(r)
     kmem.freelist = r->next;
   release(&kmem.lock);

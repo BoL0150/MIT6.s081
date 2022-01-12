@@ -11,7 +11,7 @@
  */
 pagetable_t kernel_pagetable;
 
-extern char etext[];  // kernel.ld sets this to end of kernel code.
+extern char etext[];  // kernel.ld sets this to end of kernel code.内核代码的结束位置
 
 extern char trampoline[]; // trampoline.S
 
@@ -56,6 +56,7 @@ kvminithart()
   sfence_vma();
 }
 
+// 给定虚拟地址和页表地址，获取该虚拟地址在页表中的PTE的地址
 // Return the address of the PTE in page table pagetable
 // that corresponds to virtual address va.  If alloc!=0,
 // create any required page-table pages.
@@ -141,6 +142,7 @@ kvmpa(uint64 va)
   return pa+off;
 }
 
+// 给定页表，将指定范围的虚拟地址映射到指定的物理地址
 // Create PTEs for virtual addresses starting at va that refer to
 // physical addresses starting at pa. va and size might not
 // be page-aligned. Returns 0 on success, -1 if walk() couldn't
@@ -170,8 +172,7 @@ mappages(pagetable_t pagetable, uint64 va, uint64 size, uint64 pa, int perm)
 // Remove npages of mappings starting from va. va must be
 // page-aligned. The mappings must exist.
 // Optionally free the physical memory.
-void
-uvmunmap(pagetable_t pagetable, uint64 va, uint64 npages, int do_free)
+void uvmunmap(pagetable_t pagetable, uint64 va, uint64 npages, int do_free)
 {
   uint64 a;
   pte_t *pte;
@@ -184,6 +185,7 @@ uvmunmap(pagetable_t pagetable, uint64 va, uint64 npages, int do_free)
       panic("uvmunmap: walk");
     if((*pte & PTE_V) == 0)
       panic("uvmunmap: not mapped");
+    // PTE必须要是第三级页表中的PTE，如果PTE的标志位只有V，就表明是前两级页表
     if(PTE_FLAGS(*pte) == PTE_V)
       panic("uvmunmap: not a leaf");
     if(do_free){
@@ -207,6 +209,7 @@ uvmcreate()
   return pagetable;
 }
 
+// 只在第一个进程初始化时调用
 // Load the user initcode into address 0 of pagetable,
 // for the very first process.
 // sz must be less than a page.
@@ -225,8 +228,7 @@ uvminit(pagetable_t pagetable, uchar *src, uint sz)
 
 // Allocate PTEs and physical memory to grow process from oldsz to
 // newsz, which need not be page aligned.  Returns new size or 0 on error.
-uint64
-uvmalloc(pagetable_t pagetable, uint64 oldsz, uint64 newsz)
+uint64 uvmalloc(pagetable_t pagetable, uint64 oldsz, uint64 newsz)
 {
   char *mem;
   uint64 a;
@@ -255,8 +257,7 @@ uvmalloc(pagetable_t pagetable, uint64 oldsz, uint64 newsz)
 // newsz.  oldsz and newsz need not be page-aligned, nor does newsz
 // need to be less than oldsz.  oldsz can be larger than the actual
 // process size.  Returns the new process size.
-uint64
-uvmdealloc(pagetable_t pagetable, uint64 oldsz, uint64 newsz)
+uint64 uvmdealloc(pagetable_t pagetable, uint64 oldsz, uint64 newsz)
 {
   if(newsz >= oldsz)
     return oldsz;
@@ -277,11 +278,15 @@ freewalk(pagetable_t pagetable)
   // there are 2^9 = 512 PTEs in a page table.
   for(int i = 0; i < 512; i++){
     pte_t pte = pagetable[i];
+    // 前两级PTE的RWX位全部为0，最后一级PTE的RWX位至少有一个为1
+    // PTE有效 并且 RWX位全部为0（注意！==的优先级比&&高！），意思是如果不是最后一级的PTE并且映射了页就继续递归
     if((pte & PTE_V) && (pte & (PTE_R|PTE_W|PTE_X)) == 0){
       // this PTE points to a lower-level page table.
       uint64 child = PTE2PA(pte);
       freewalk((pagetable_t)child);
       pagetable[i] = 0;
+    // 如果 PTE有效并且RWX位至少有一个为1，就直接panic，因为只有在所有的叶PTE到物理地址的映射
+    // 全部移除后才会调用此函数，所以不会出现叶PTE的V为1的情况
     } else if(pte & PTE_V){
       panic("freewalk: leaf");
     }
@@ -439,4 +444,36 @@ copyinstr(pagetable_t pagetable, char *dst, uint64 srcva, uint64 max)
   } else {
     return -1;
   }
+}
+void
+helper(pagetable_t pagetable,int depth){
+  for(int i = 0; i < 512; i++){
+    pte_t pte = pagetable[i];
+    uint64 child = PTE2PA(pte);
+    if(pte & PTE_V){
+      switch (depth)
+      {
+      case 1:
+        printf("..%d: pte %p pa %p\n", i, pte, child);
+        break;
+      case 2: 
+        printf(".. ..%d: pte %p pa %p\n", i, pte, child);
+        break;
+      case 3:
+        printf(".. .. ..%d: pte %p pa %p\n", i, pte, child);
+        break;
+      default:
+        panic("vmprint");
+      }
+    }
+    if((pte & PTE_V) && (pte & (PTE_R|PTE_W|PTE_X)) == 0){
+      helper((pagetable_t)child, depth + 1);
+    }
+  }
+}
+
+void 
+vmprint(pagetable_t pagetable){
+  printf("page table %p\n", pagetable);
+  helper(pagetable,1);
 }

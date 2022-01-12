@@ -8,6 +8,10 @@
 
 struct cpu cpus[NCPU];
 
+// 进程表中的进程结构体从来不销毁，一直被复用，当内核创建一个新的进程的时候
+// 需要给进程结构体分配页表、trapframe、以及初始化结构体内部的其他的字段
+// 当销毁一个进程的时候，不需要销毁进程结构体，只需要将物理内存中的trapframe释放掉，
+// 页表释放掉，结构体内的字段全部置为0即可
 struct proc proc[NPROC];
 
 struct proc *initproc;
@@ -21,6 +25,7 @@ static void freeproc(struct proc *p);
 
 extern char trampoline[]; // trampoline.S
 
+// 初始化进程表中所有进程的内核栈
 // initialize the proc table at boot time.
 void
 procinit(void)
@@ -38,7 +43,9 @@ procinit(void)
       if(pa == 0)
         panic("kalloc");
       uint64 va = KSTACK((int) (p - proc));
+      // 将每个进程的内核栈映射到内核页表中
       kvmmap(va, (uint64)pa, PGSIZE, PTE_R | PTE_W);
+      // 将内核栈的va记录在进程控制块中
       p->kstack = va;
   }
   kvminithart();
@@ -85,6 +92,8 @@ allocpid() {
   return pid;
 }
 
+// 查找进程表，找到一个unused的进程，分配进程id，再给trapframe分配物理地址
+// 再调用proc_pagetable初始化页表，建立trapframe和trampoline的映射
 // Look in the process table for an UNUSED proc.
 // If found, initialize state required to run in the kernel,
 // and return with p->lock held.
@@ -152,6 +161,7 @@ freeproc(struct proc *p)
   p->state = UNUSED;
 }
 
+// 先分配一个物理页作为根页表，再调用mappages将trapframe和trampoline映射到页表中
 // Create a user page table for a given process,
 // with no user memory, but with trampoline pages.
 pagetable_t
@@ -190,9 +200,15 @@ proc_pagetable(struct proc *p)
 void
 proc_freepagetable(pagetable_t pagetable, uint64 sz)
 {
+  // 先将页表最顶部trampoline和trapframe取消映射
   uvmunmap(pagetable, TRAMPOLINE, 1, 0);
   uvmunmap(pagetable, TRAPFRAME, 1, 0);
+  // 再将页表底部的sz取消映射，同时释放物理内存。此时页表没有映射关系，
+  // 再调用freewalk释放所有的页表页
   uvmfree(pagetable, sz);
+  // trampoline和trapframe不需要释放物理内存，trampoline是所有进程共享的，
+  // 该函数被exec调用时：进程结构体proc不变，只是页表被替换了，依然使用了之前的trapframe，所以不能释放
+  // 如果是其他情况下调用，可能需要在调用前先释放trapframe的物理地址
 }
 
 // a user program that calls exec("/init")
@@ -213,6 +229,7 @@ userinit(void)
 {
   struct proc *p;
 
+  // 分配一个进程
   p = allocproc();
   initproc = p;
   
@@ -243,10 +260,12 @@ growproc(int n)
 
   sz = p->sz;
   if(n > 0){
+    // 分配物理内存，在页表中建立映射，从而实现用户内存从sz增长到sz+n
     if((sz = uvmalloc(p->pagetable, sz, sz + n)) == 0) {
       return -1;
     }
   } else if(n < 0){
+    // 调用uvunmap取消用户页表中的映射，释放物理内存，从而实现用户内存从sz减少到sz+n
     sz = uvmdealloc(p->pagetable, sz, sz + n);
   }
   p->sz = sz;
