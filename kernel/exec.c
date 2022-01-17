@@ -58,6 +58,10 @@ exec(char *path, char **argv)
     // 在装入内存之前，我们先要分配足够的空间。调用uvmalloc分配物理页，在页表中建立映射
     if((sz1 = uvmalloc(pagetable, sz, ph.vaddr + ph.memsz)) == 0)
       goto bad;
+    // lab3，用户页表的内存增长不能超过PLIC，否则复制到内核页表后就会与内核的数据覆盖
+    if(sz1 >= PLIC)
+      goto bad;
+
     sz = sz1;
     if(ph.vaddr % PGSIZE != 0)
       goto bad;
@@ -89,6 +93,8 @@ exec(char *path, char **argv)
   sp = sz;
   stackbase = sp - PGSIZE;
 
+  // lab3
+  u2kvmcopy(p->pagetable, p->proc_kernel_pagetable, 0, sz);
   // Push argument strings, prepare rest of stack in ustack.
   // 将exec的参数放入栈中
   for(argc = 0; argv[argc]; argc++) {
@@ -179,5 +185,5 @@ loadseg(pagetable_t pagetable, uint64 va, struct inode *ip, uint offset, uint sz
       return -1;
   }
   
-  return;
+  return 0;
 }

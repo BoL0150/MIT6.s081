@@ -94,6 +94,8 @@ struct proc {
   int xstate;                  // Exit status to be returned to parent's wait
   int pid;                     // Process ID
 
+  // For lab3，为每一个进程维护一个内核页表的副本，每个进程在内核执行时，使用这个内核页表，而不是全局内核页表
+  pagetable_t proc_kernel_pagetable;
   // these are private to the process, so p->lock need not be held.
   uint64 kstack;               // Virtual address of kernel stack
   uint64 sz;                   // Size of process memory (bytes)

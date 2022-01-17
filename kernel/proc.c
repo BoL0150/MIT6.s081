@@ -6,6 +6,7 @@
 #include "proc.h"
 #include "defs.h"
 
+extern pagetable_t kernel_pagetable;
 struct cpu cpus[NCPU];
 
 // 进程表中的进程结构体从来不销毁，一直被复用，当内核创建一个新的进程的时候
@@ -24,7 +25,24 @@ static void wakeup1(struct proc *chan);
 static void freeproc(struct proc *p);
 
 extern char trampoline[]; // trampoline.S
-
+// lab3
+void
+u2kvmcopy(pagetable_t pagetable, pagetable_t kpagetable, uint64 lowwer, uint64 upper){
+  pte_t *pte_from, *pte_to;
+  if(upper < lowwer){
+    return;
+  }
+  lowwer = PGROUNDUP(lowwer);
+  for(uint64 a = lowwer; a < upper; a += PGSIZE){
+    if((pte_from = walk(pagetable, a, 0)) == 0)
+      panic("pte should exist");
+    if((pte_to = walk(kpagetable, a, 1)) == 0)
+      panic("walk fails");
+    uint64 pa = PTE2PA(*pte_from);
+    uint flags = (PTE_FLAGS(*pte_from) & ~PTE_U);
+    *pte_to = PA2PTE(pa) | flags;
+  }
+}
 // 初始化进程表中所有进程的内核栈
 // initialize the proc table at boot time.
 void
@@ -36,17 +54,6 @@ procinit(void)
   for(p = proc; p < &proc[NPROC]; p++) {
       initlock(&p->lock, "proc");
 
-      // Allocate a page for the process's kernel stack.
-      // Map it high in memory, followed by an invalid
-      // guard page.
-      char *pa = kalloc();
-      if(pa == 0)
-        panic("kalloc");
-      uint64 va = KSTACK((int) (p - proc));
-      // 将每个进程的内核栈映射到内核页表中
-      kvmmap(va, (uint64)pa, PGSIZE, PTE_R | PTE_W);
-      // 将内核栈的va记录在进程控制块中
-      p->kstack = va;
   }
   kvminithart();
 }
@@ -92,6 +99,30 @@ allocpid() {
   return pid;
 }
 
+// lab3
+void 
+mapkstack(struct proc *p){
+
+  // printf("mapkstack*********\n");
+  // uint64 va = p->kstack;
+  // uint64 pa = walkaddr(kernel_pagetable, va);
+  // printf("mapkstack*********\n");
+  // pkvmmap(p->proc_kernel_pagetable, va, pa, PGSIZE, PTE_R | PTE_W);
+  // printf("mapkstack*********\n");
+
+  // Allocate a page for the process's kernel stack.
+  // Map it high in memory, followed by an invalid
+  // guard page.
+  char *pa = kalloc();
+  if(pa == 0)
+    panic("kalloc");
+
+  uint64 va = KSTACK((int) (p - proc));
+  // 将每个进程的内核栈映射到内核页表中
+  pkvmmap(p->proc_kernel_pagetable, va, (uint64)pa, PGSIZE, PTE_R | PTE_W);
+  // 将内核栈的va记录在进程控制块中
+  p->kstack = va;
+}
 // 查找进程表，找到一个unused的进程，分配进程id，再给trapframe分配物理地址
 // 再调用proc_pagetable初始化页表，建立trapframe和trampoline的映射
 // Look in the process table for an UNUSED proc.
@@ -116,12 +147,12 @@ allocproc(void)
 found:
   p->pid = allocpid();
 
+
   // Allocate a trapframe page.
   if((p->trapframe = (struct trapframe *)kalloc()) == 0){
     release(&p->lock);
     return 0;
   }
-
   // An empty user page table.
   p->pagetable = proc_pagetable(p);
   if(p->pagetable == 0){
@@ -129,7 +160,17 @@ found:
     release(&p->lock);
     return 0;
   }
-
+  // For lab3，初始化进程自己的内核页表
+  p->proc_kernel_pagetable = pkvminit();
+  if(p->proc_kernel_pagetable == 0){
+    panic("lab3");
+  }
+  // 之前在procinit中已经将所有进程的内核栈映射到全局的内核页表中，
+  // 现在在初始化完进程自己的内核页表后，还需要将该进程的内核栈映射该进程自己的内核页表中
+  mapkstack(p);
+  if(p->kstack == 0){
+    panic("lab3");
+  }
   // Set up new context to start executing at forkret,
   // which returns to user space.
   memset(&p->context, 0, sizeof(p->context));
@@ -138,7 +179,42 @@ found:
 
   return p;
 }
-
+// lab3
+void free_pkp_walk(pagetable_t pagetable){
+  for(int i = 0; i < 512;i++){
+    pte_t pte = pagetable[i];
+    if((pte & PTE_V)){
+      pagetable[i] = 0;
+      if((pte & (PTE_R|PTE_W|PTE_X)) == 0){
+        uint64 child = PTE2PA(pte);
+        free_pkp_walk((pagetable_t)child);
+      }
+    }
+  }
+  kfree((void*)pagetable);
+}
+// lab3
+void 
+free_proc_kernel_pagetable(struct proc *p){
+  // 不需要释放任何物理地址，因为kernbase以下的部分和trampoline是所有内核线程共享的
+  // 而内核栈的物理内存也不需要释放，同一个proc结构体的内核栈是复用的。下一次allocproc时
+  // 会将proc的context的sp重新指向这个进程的内核栈的栈顶
+  // 所以只需要释放映射和页表即可
+  
+  // 先释放内核栈的物理空间
+  if(p->kstack){
+    pte_t *pte = walk(p->proc_kernel_pagetable, p->kstack,0);
+    if(pte == 0){
+      panic("freeprock");
+    }
+    kfree((void*)PTE2PA(*pte));
+  }
+  p->kstack = 0;
+  // 再释放映射和页表
+  if(p->proc_kernel_pagetable){
+    free_pkp_walk(p->proc_kernel_pagetable);
+  }
+}
 // free a proc structure and the data hanging from it,
 // including user pages.
 // p->lock must be held.
@@ -150,6 +226,8 @@ freeproc(struct proc *p)
   p->trapframe = 0;
   if(p->pagetable)
     proc_freepagetable(p->pagetable, p->sz);
+  // lab3 释放进程的内核页表
+  free_proc_kernel_pagetable(p);
   p->pagetable = 0;
   p->sz = 0;
   p->pid = 0;
@@ -238,6 +316,8 @@ userinit(void)
   uvminit(p->pagetable, initcode, sizeof(initcode));
   p->sz = PGSIZE;
 
+  // lab3
+  u2kvmcopy(p->pagetable, p->proc_kernel_pagetable, 0, p->sz);
   // prepare for the very first "return" from kernel to user.
   p->trapframe->epc = 0;      // user program counter
   p->trapframe->sp = PGSIZE;  // user stack pointer
@@ -264,6 +344,8 @@ growproc(int n)
     if((sz = uvmalloc(p->pagetable, sz, sz + n)) == 0) {
       return -1;
     }
+    // lab3
+    u2kvmcopy(p->pagetable, p->proc_kernel_pagetable, sz - n, sz);
   } else if(n < 0){
     // 调用uvunmap取消用户页表中的映射，释放物理内存，从而实现用户内存从sz减少到sz+n
     sz = uvmdealloc(p->pagetable, sz, sz + n);
@@ -297,6 +379,7 @@ fork(void)
   np->parent = p;
 
   // copy saved user registers.
+  // 复制了父进程的所有寄存器（包括epc），返回用户空间时，才能有和父进程一样的环境
   *(np->trapframe) = *(p->trapframe);
 
   // Cause fork to return 0 in the child.
@@ -307,6 +390,9 @@ fork(void)
     if(p->ofile[i])
       np->ofile[i] = filedup(p->ofile[i]);
   np->cwd = idup(p->cwd);
+
+  // lab3,子进程复制了父进程的页表后，还需要将页表添加到内核页表
+  u2kvmcopy(np->pagetable, np->proc_kernel_pagetable, 0, np->sz);
 
   safestrcpy(np->name, p->name, sizeof(p->name));
 
@@ -492,11 +578,18 @@ scheduler(void)
         // before jumping back to us.
         p->state = RUNNING;
         c->proc = p;
-        swtch(&c->context, &p->context);
+        // lab3 切换为进程的内核页表
+        w_satp(MAKE_SATP(p->proc_kernel_pagetable));
+        sfence_vma();
 
+        swtch(&c->context, &p->context);
         // Process is done running for now.
         // It should have changed its p->state before coming back.
         c->proc = 0;
+
+        // lab3 回到调度器线程，切换为全局页表
+        w_satp(MAKE_SATP(kernel_pagetable));
+        sfence_vma();
 
         found = 1;
       }

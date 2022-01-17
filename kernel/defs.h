@@ -86,6 +86,7 @@ void            panic(char*) __attribute__((noreturn));
 void            printfinit(void);
 
 // proc.c
+void            u2kvmcopy(pagetable_t pagetable, pagetable_t kpagetable, uint64 lowwer, uint64 upper);
 int             cpuid(void);
 void            exit(int);
 int             fork(void);
@@ -158,6 +159,11 @@ void            uartputc_sync(int);
 int             uartgetc(void);
 
 // vm.c
+
+// lab3
+pagetable_t     pkvminit(void);
+void            pkvmmap(pagetable_t,uint64, uint64, uint64, int);
+
 void            kvminit(void);
 void            kvminithart(void);
 uint64          kvmpa(uint64);
@@ -179,6 +185,7 @@ int             copyout(pagetable_t, uint64, char *, uint64);
 int             copyin(pagetable_t, char *, uint64, uint64);
 int             copyinstr(pagetable_t, char *, uint64, uint64);
 void            vmprint(pagetable_t pagetable);
+pte_t *         walk(pagetable_t pagetable, uint64 va, int alloc);
 // plic.c
 void            plicinit(void);
 void            plicinithart(void);
@@ -223,3 +230,7 @@ int             sockread(struct sock *, uint64, int);
 int             sockwrite(struct sock *, uint64, int);
 void            sockrecvudp(struct mbuf*, uint32, uint16, uint16);
 #endif
+// vmcopyin.c
+
+int             copyin_new(pagetable_t pagetable, char *dst, uint64 srcva, uint64 len);
+int             copyinstr_new(pagetable_t pagetable, char *dst, uint64 srcva, uint64 max);
