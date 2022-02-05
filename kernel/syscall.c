@@ -68,6 +68,9 @@ int
 argaddr(int n, uint64 *ip)
 {
   *ip = argraw(n);
+  if(*ip < myproc()->sz){
+    lazy_uvmalloc(myproc(),*ip);    
+  }
   return 0;
 }
 

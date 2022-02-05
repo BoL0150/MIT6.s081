@@ -28,7 +28,30 @@ trapinithart(void)
 {
   w_stvec((uint64)kernelvec);
 }
-
+int
+is_valid_addr(struct proc* p,uint64 va){
+  // 只允许在栈和堆中出现page fault
+  return va < p->sz && va > PGROUNDDOWN(p->trapframe->sp);
+}
+// 给指定进程的va分配PTE和物理页
+uint64 
+lazy_uvmalloc(struct proc* p,uint64 va){
+  if(walkaddr(p->pagetable,va) !=0){
+    return 0;
+  }
+  va = PGROUNDDOWN(va);
+  uint64 ka = (uint64)kalloc();
+  if(ka == 0){
+    p->killed = 1;
+  }else{
+    memset((void *)ka,0,PGSIZE);
+    if(mappages(p->pagetable,va,PGSIZE,ka,PTE_W|PTE_R|PTE_U) != 0){
+      kfree((void *)ka);
+      p->killed = 1;
+    }
+  }
+  return 0;
+}
 //
 // handle an interrupt, exception, or system call from user space.
 // called from trampoline.S
@@ -67,6 +90,9 @@ usertrap(void)
     syscall();
   } else if((which_dev = devintr()) != 0){
     // ok
+  } else if((r_scause() == 15 || r_scause() == 13) && 
+    is_valid_addr(p,r_stval()) && lazy_uvmalloc(p,r_stval()) == 0){
+
   } else {
     printf("usertrap(): unexpected scause %p pid=%d\n", r_scause(), p->pid);
     printf("            sepc=%p stval=%p\n", r_sepc(), r_stval());

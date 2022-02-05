@@ -141,6 +141,8 @@ void            syscall();
 
 // trap.c
 extern uint     ticks;
+
+uint64          lazy_uvmalloc(struct proc* p,uint64 va);
 void            trapinit(void);
 void            trapinithart(void);
 extern struct spinlock tickslock;
